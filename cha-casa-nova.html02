@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lista de Presentes</title>
+<style>
+  :root{--bg:#f8f6f2;--card:#fff;--accent:#b89f7a;--ok:#25D366;--text:#4a403a}
+  body{font-family:"Poppins",system-ui,Arial; background:var(--bg); color:var(--text); margin:0}
+  header{background:#f4e9db;text-align:center;padding:18px 12px 28px;border-bottom:3px solid #d1bfa7}
+  header h1{margin:8px 0 4px;font-size:1.6rem}
+  header p{margin:0;color:#5a524c}
+  .top-contact{max-width:1200px;margin:18px auto;padding:0 20px}
+  .whatsapp-inline{display:inline-block;background:var(--ok);color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600}
+  .container{max-width:1200px;margin:18px auto;padding:0 20px 60px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+  .card{background:var(--card);border-radius:10px;padding:16px;box-shadow:0 6px 18px rgba(0,0,0,0.06);position:relative;display:flex;flex-direction:column;gap:10px}
+  .card h3{margin:0;font-size:1.05rem;color:#3b322c}
+  .card a{color:var(--accent);text-decoration:none;font-weight:600}
+  .card .meta{font-size:0.9rem;color:#6b615a}
+  .btn{background:var(--ok);color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;font-weight:700}
+  .btn[disabled]{opacity:0.5;cursor:not-allowed}
+  .badge{position:absolute;top:12px;right:12px;background:var(--accent);color:#fff;padding:6px 8px;border-radius:6px;font-size:0.8rem}
+  .badge.sendo{background:#ffb74d}
+  .badge.comprado{background:#4caf50}
+  .notice{max-width:1200px;margin:12px auto;padding:0 20px}
+  .erro{background:#fff0f0;border:1px solid #f2c2c2;color:#900;padding:10px;border-radius:8px;margin-bottom:10px;display:none}
+  footer{max-width:1200px;margin:28px auto;padding:0 20px 40px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .admin-btn{background:#333;color:#fff;padding:8px 12px;border-radius:8px;border:none;cursor:pointer}
+  .small{font-size:0.9rem;color:#6b615a}
+  /* responsive adjustments */
+  @media(max-width:420px){ header h1{font-size:1.25rem} .card{padding:12px} }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1600&q=80" alt="" style="width:100%;max-height:220px;object-fit:cover;border-bottom:3px solid #d1bfa7">
+  <h1>Lista de Presentes</h1>
+  <p>💛 Escolha um presente para ajudar a montar o novo lar com carinho.</p>
+</header>
+
+<div class="top-contact">
+  <!-- WhatsApp visível logo abaixo da introdução -->
+  <a id="whatsapp-main" class="whatsapp-inline" href="#" target="_blank">💬 Falar pelo WhatsApp</a>
+  <span style="margin-left:12px" class="small">Use o WhatsApp para avisar que vai comprar e enviar o comprovante.</span>
+</div>
+
+<div class="notice">
+  <div id="erro" class="erro"></div>
+</div>
+
+<div class="container" id="lista-presentes">
+  <!-- cards serão injetados aqui -->
+</div>
+
+<footer>
+  <div class="small">Reserva automática: quando alguém clicar, o item ficará <strong>"Sendo visitado"</strong> por <span id="reserve-minutes">60</span> minutos.</div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <button id="admin-enter" class="admin-btn">Entrar como admin</button>
+    <div class="small">Modo admin: confirme compras ou libere reservas.</div>
+  </div>
+</footer>
+
+<!-- Firebase SDK (compat) -->
+<script src="https://www.gstatic.com/firebasejs/10.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.15.0/firebase-firestore-compat.js"></script>
+
+<script>
+/*
+  index.html funcional:
+  - 3 estados: "disponivel" / "sendoVisitado" / "comprado"
+  - ao clicar "Escolher", salva no Firestore: status='sendoVisitado', reservaAte = Date.now() + RESERVATION_MINUTES*60000, reserverId, reserverName(optional)
+  - reserva expira automaticamente no cliente quando detectada expiracao (o cliente faz a revalidação ao carregar ou via onSnapshot)
+  - admin pode marcar 'comprado' ou 'liberar' a reserva
+  - WhatsApp abre com mensagem contendo código de reserva
+*/
+
+/* ========== CONFIG ========== */
+/* Substitua estas configs pelas do seu projeto Firebase (obrigatório para multiusuário) */
+const firebaseConfig = {
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU_PROJETO.firebaseapp.com",
+  projectId: "SEU_PROJETO",
+  storageBucket: "SEU_PROJETO.appspot.com",
+  messagingSenderId: "SEU_SENDER_ID",
+  appId: "SEU_APP_ID"
+};
+
+/* Tempo da reserva em minutos (padrão 60) */
+const RESERVATION_MINUTES = 60;
+
+/* Número de WhatsApp que vai receber as mensagens (formato internacional sem +, ex: 5511999999999) */
+const OWNER_WHATSAPP = "5511950392090";
+
+/* Senha admin (você pediu pra eu te lembrar — abaixo eu já deixei a senha).
+   OBS: isso roda no front-end (visível a quem inspeciona). Para algo mais seguro, use autenticação real. */
+const ADMIN_PASSWORD = "limaAdmin2025";
+
+/* ============================ */
+
+/* Produtos (edite à vontade) */
+const itens = [
+  { nome: "Mop Giratório 8L", link: "https://s.shopee.com.br/AUlWWlxNPO" },
+  { nome: "Rodo Silicone Mágico", link: "https://s.shopee.com.br/qb117DgJm" },
+  { nome: "Gancho Multiuso Adesivo", link: "https://s.shopee.com.br/60J7Ad2PMY" },
+  { nome: "Varal Dobrável Inox", link: "https://s.shopee.com.br/4VUJNuG6tG" },
+  { nome: "Jogo de Taças 340ml", link: "https://s.shopee.com.br/4fnjaM32ZQ" },
+  { nome: "Cesto de Lixo 5L", link: "https://s.shopee.com.br/9KZZ96pdAQ" }
+];
+
+const listaEl = document.getElementById('lista-presentes');
+const erroBox = document.getElementById('erro');
+const reserveMinutesEl = document.getElementById('reserve-minutes');
+reserveMinutesEl.textContent = RESERVATION_MINUTES;
+
+/* Inicializa Firebase com tratamento de erro */
+let db = null;
+try {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+} catch (e) {
+  console.warn("Firebase não configurado corretamente:", e);
+  erroBox.style.display = 'block';
+  erroBox.innerText = "Firebase não configurado — a sincronização em tempo real está desligada. Cole as credenciais no código para ativar.";
+}
+
+/* Gera um id persistente para este visitante (pra poder saber quem reservou) */
+function getVisitorId(){
+  let id = localStorage.getItem('visitorId');
+  if(!id){
+    id = 'v_' + Math.random().toString(36).slice(2,10);
+    localStorage.setItem('visitorId', id);
+  }
+  return id;
+}
+const visitorId = getVisitorId();
+
+/* Helper: doc id para um item (usa btoa do link) */
+function itemDocId(item){
+  return btoa(item.link);
+}
+
+/* Exibe lista (com realtime se Firestore disponível) */
+if(db){
+  // Observador para atualizações em tempo real
+  db.collection('presentes').onSnapshot(async snap => {
+    // Se coleção vazia (1ª vez), cria docs iniciais com status 'disponivel'
+    if(snap.empty){
+      // cria docs iniciais
+      const batch = db.batch();
+      itens.forEach(it => {
+        const docRef = db.collection('presentes').doc(itemDocId(it));
+        batch.set(docRef, {
+          nome: it.nome,
+          link: it.link,
+          status: 'disponivel',
+          updatedAt: Date.now()
+        }, { merge: true });
+      });
+      await batch.commit();
+      // snap será reemitido pelo onSnapshot; assim que recolher re-render abaixo, ok.
+      return;
+    }
+    // Converte snapshot pra map
+    const data = {};
+    snap.docs.forEach(d => data[d.id] = d.data());
+    renderList(data);
+  }, err => {
+    console.error('onSnapshot erro:', err);
+    erroBox.style.display = 'block';
+    erroBox.innerText = 'Erro conectando ao Firestore. Verifique as credenciais.';
+  });
+} else {
+  // Sem Firebase: renderiza apenas local (todos disponíveis)
+  renderList(null);
+}
+
+/* Renderiza os cards. Se dataMap for null => sem Firebase, todos disponiveis */
+function renderList(dataMap){
+  listaEl.innerHTML = '';
+  itens.forEach(item => {
+    const id = itemDocId(item);
+    const data = dataMap ? (dataMap[id] || null) : null;
+    // se existe data e status = sendoVisitado e reserva expirou => reset no cliente (tenta no servidor também)
+    if(data && data.status === 'sendoVisitado' && data.reservaAte){
+      const agora = Date.now();
+      if(typeof data.reservaAte === 'object' && data.reservaAte.toMillis) {
+        // caso seja Firestore Timestamp
+        data.reservaAte = data.reservaAte.toMillis();
+      }
+      if(agora > data.reservaAte){
+        // reserva expirou — tentamos liberar no servidor
+        if(db){
+          db.collection('presentes').doc(id).get().then(doc => {
+            const docData = doc.data();
+            // só libera se ainda está marcado sendoVisitado e reservaAte antiga
+            if(docData && docData.status === 'sendoVisitado' && docData.reservaAte <= agora){
+              db.collection('presentes').doc(id).set({ status: 'disponivel', reserverId: null, reservaAte: null, updatedAt: Date.now() }, { merge: true });
+            }
+          }).catch(e => console.warn('Erro liberando reserva expirada:', e));
+        }
+        // também atualiza localmente para evitar mostrar errado até o servidor responder
+        data.status = 'disponivel';
+        data.reserverId = null;
+      }
+    }
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    // Badge / status
+    if(data && data.status === 'sendoVisitado'){
+      const b = document.createElement('div'); b.className = 'badge sendo'; b.innerText = 'Sendo visitado 👀'; card.appendChild(b);
+    } else if(data && data.status === 'comprado'){
+      const b = document.createElement('div'); b.className = 'badge comprado'; b.innerText = 'Comprado ✅'; card.appendChild(b);
+    }
+
+    // Conteúdo
+    const title = document.createElement('h3'); title.innerText = item.nome;
+    const meta = document.createElement('div'); meta.className = 'meta'; meta.innerText = item.link;
+    const link = document.createElement('a'); link.href = item.link; link.target = '_blank'; link.innerText = 'Ver produto';
+
+    // Botão depende do status
+    const btn = document.createElement('button'); btn.className = 'btn';
+    if(!data || data.status === 'disponivel' || !data.status){
+      btn.innerText = 'Escolher este presente';
+      btn.onclick = () => reservarItem(item);
+    } else if(data.status === 'sendoVisitado'){
+      // se quem reservou for este visitor e ainda dentro do prazo, mostra "Reservado por você"
+      if(data.reserverId === visitorId){
+        btn.innerText = 'Reservado por você (aguarde confirmação)';
+        btn.disabled = true;
+      } else {
+        btn.innerText = 'Indisponível no momento';
+        btn.disabled = true;
+      }
+    } else if(data.status === 'comprado'){
+      btn.innerText = 'Comprado';
+      btn.disabled = true;
+    }
+
+    // monta
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.appendChild(link);
+    card.appendChild(btn);
+
+    // Se existe reserva e for seu, mostra tempo restante
+    if(data && data.status === 'sendoVisitado' && data.reserverId === visitorId){
+      const restante = document.createElement('div');
+      restante.className = 'small';
+      restante.style.marginTop = '6px';
+      restante.style.color = '#6b615a';
+      restante.innerText = 'Sua reserva expira em alguns instantes — finalize a compra e envie o comprovante.';
+      card.appendChild(restante);
+    }
+
+    listaEl.appendChild(card);
+  });
+}
+
+/* Ação: reservar item (status -> sendoVisitado) + abre WhatsApp com mensagem de reserva */
+async function reservarItem(item){
+  if(!db){
+    // sem Firebase: só abre WhatsApp como fallback
+    abrirWhatsAppConfirm(item, null);
+    return;
+  }
+  const id = itemDocId(item);
+  const docRef = db.collection('presentes').doc(id);
+
+  try {
+    // Leitura transacional simples: pega doc atual, se disponivel então marca sendoVisitado
+    await db.runTransaction(async tx => {
+      const doc = await tx.get(docRef);
+      const docData = doc.exists ? doc.data() : null;
+      const agora = Date.now();
+
+      // se não existir ou estiver disponivel -> reservar
+      if(!docData || docData.status === 'disponivel' || !docData.status){
+        const reservaAte = agora + RESERVATION_MINUTES * 60 * 1000;
+        tx.set(docRef, {
+          status: 'sendoVisitado',
+          reserverId: visitorId,
+          reserverAt: agora,
+          reservaAte: reservaAte,
+          updatedAt: agora,
+          nome: item.nome,
+          link: item.link
+        }, { merge: true });
+      } else {
+        // se já ocupado, lança erro pra tratar depois
+        throw new Error('Item não disponível');
+      }
+    });
+
+    // reserva criada com sucesso — abre WhatsApp com instruções
+    abrirWhatsAppConfirm(item, true);
+  } catch (e) {
+    console.warn('Reserva falhou:', e);
+    alert('Não foi possível reservar o item — pode ter sido reservado por outra pessoa. Atualize a página e tente novamente.');
+  }
+}
+
+/* Abre WhatsApp com mensagem de confirmação + código da reserva (doc id) */
+function abrirWhatsAppConfirm(item, reserved){
+  const code = btoa(item.link).slice(0, 12); // código curto só para referência
+  const instr = reserved ? `Acabei de reservar (código ${code}). Vou realizar a compra e enviar o comprovante.` : `Quero comprar: ${item.nome}`;
+  const msg = encodeURIComponent(`${instr}\nProduto: ${item.nome}\nLink: ${item.link}\nCódigo da reserva: ${code}\n\nPor favor, envio o comprovante aqui para confirmar a compra.`);
+  const wa = `https://wa.me/${OWNER_WHATSAPP}?text=${msg}`;
+  window.open(wa, '_blank');
+}
+
+/* ========== Admin UI ========== */
+document.getElementById('admin-enter').addEventListener('click', async () => {
+  const senha = prompt('Senha de admin:');
+  if(!senha) return;
+  if(senha !== ADMIN_PASSWORD){
+    alert('Senha incorreta.');
+    return;
+  }
+  // mostra painel admin simples
+  openAdminPanel();
+});
+
+async function openAdminPanel(){
+  if(!db){
+    alert('Painel admin requer Firebase configurado.');
+    return;
+  }
+  // cria modal simples
+  const modal = document.createElement('div');
+  modal.style.position = 'fixed';
+  modal.style.inset = '0';
+  modal.style.background = 'rgba(0,0,0,0.45)';
+  modal.style.display = 'flex';
+  modal.style.alignItems = 'center';
+  modal.style.justifyContent = 'center';
+  modal.style.zIndex = 9999;
+
+  const box = document.createElement('div');
+  box.style.width = '92%';
+  box.style.maxWidth = '760px';
+  box.style.maxHeight = '80vh';
+  box.style.overflow = 'auto';
+  box.style.background = '#fff';
+  box.style.borderRadius = '12px';
+  box.style.padding = '18px';
+  box.style.boxShadow = '0 12px 40px rgba(0,0,0,0.2)';
+
+  const h = document.createElement('h2'); h.innerText = 'Painel Admin';
+  const info = document.createElement('div'); info.className = 'small'; info.style.marginBottom='10px'; info.innerText = 'Aqui você pode confirmar compra (marcar como COMPRADO) ou liberar reservas expiradas/manual.';
+  box.appendChild(h); box.appendChild(info);
+
+  // lista dinâmica de items
+  const list = document.createElement('div'); list.style.display='grid'; list.style.gap='10px';
+
+  box.appendChild(list);
+
+  const closeBtn = document.createElement('button'); closeBtn.innerText = 'Fechar'; closeBtn.style.marginTop='12px'; closeBtn.className='admin-btn';
+  closeBtn.onclick = () => document.body.removeChild(modal);
+  box.appendChild(closeBtn);
+
+  modal.appendChild(box);
+  document.body.appendChild(modal);
+
+  // fetch atual e listener
+  const snap = await db.collection('presentes').get();
+  const dataMap = {};
+  snap.docs.forEach(d => dataMap[d.id] = d.data());
+  renderAdminList(dataMap, list);
+
+  // listener real-time para atualizar painel automaticamente
+  const unsub = db.collection('presentes').onSnapshot(snap2 => {
+    const newMap = {};
+    snap2.docs.forEach(d => newMap[d.id] = d.data());
+    renderAdminList(newMap, list);
+  });
+
+  // remove listener quando fecha modal
+  closeBtn.addEventListener('click', () => unsub());
+}
+
+function renderAdminList(dataMap, container){
+  container.innerHTML = '';
+  // manter a ordem definida por itens[]
+  itens.forEach(item => {
+    const id = itemDocId(item);
+    const data = dataMap[id] || { nome: item.nome, link: item.link, status: 'disponivel' };
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justifyContent = 'space-between';
+    row.style.alignItems = 'center';
+    row.style.border = '1px solid #eee';
+    row.style.padding = '8px';
+    row.style.borderRadius = '8px';
+    row.style.gap = '10px';
+
+    const left = document.createElement('div'); left.style.flex='1';
+    const nome = document.createElement('div'); nome.innerText = data.nome || item.nome; nome.style.fontWeight='700';
+    const status = document.createElement('div'); status.className='small'; status.style.color='#6b615a';
+    status.innerText = `Status: ${data.status || 'disponivel'}${data.reservaAte ? ' • reservaAte: ' + (new Date(data.reservaAte).toLocaleString()) : ''}`;
+    left.appendChild(nome); left.appendChild(status);
+
+    const right = document.createElement('div'); right.style.display='flex'; right.style.gap='8px';
+    const btnComprado = document.createElement('button'); btnComprado.innerText='Marcar Comprado'; btnComprado.className='btn';
+    btnComprado.onclick = async () => {
+      if(!confirm('Confirmar que este presente foi comprado? (isto bloqueará permanentemente)')) return;
+      await db.collection('presentes').doc(id).set({ status: 'comprado', updatedAt: Date.now() }, { merge: true });
+      alert('Marcado como comprado ✅');
+    };
+
+    const btnLiberar = document.createElement('button'); btnLiberar.innerText='Liberar Reserva'; btnLiberar.className='admin-btn';
+    btnLiberar.onclick = async () => {
+      if(!confirm('Liberar esta reserva? (isso tornará o item disponível novamente)')) return;
+      await db.collection('presentes').doc(id).set({ status: 'disponivel', reserverId: null, reservaAte: null, updatedAt: Date.now() }, { merge: true });
+      alert('Reserva liberada.');
+    };
+
+    // botão para deletar (opcional)
+    const btnReset = document.createElement('button'); btnReset.innerText='Resetar (disponível)'; btnReset.className='admin-btn';
+    btnReset.onclick = async () => {
+      if(!confirm('Resetar para disponível e limpar metadados?')) return;
+      await db.collection('presentes').doc(id).set({ status: 'disponivel', reserverId: null, reservaAte: null, updatedAt: Date.now() }, { merge: true });
+      alert('Resetado.');
+    };
+
+    right.appendChild(btnComprado);
+    right.appendChild(btnLiberar);
+    right.appendChild(btnReset);
+
+    row.appendChild(left);
+    row.appendChild(right);
+    container.appendChild(row);
+  });
+}
+
+/* Configura o link principal do WhatsApp (no topo) */
+const whatsappMain = document.getElementById('whatsapp-main');
+whatsappMain.href = `https://wa.me/${OWNER_WHATSAPP}?text=${encodeURIComponent('Olá! Vi a lista de presentes e queria perguntar algo.')}`;
+
+/* Quando não ter Firebase configurado, renderList(null) já foi chamada.
+   Caso tenha Firebase e colecion 'presentes' seja criada, onSnapshot cuidará do resto. */
+if(!db){
+  // render sem sync
+  renderList(null);
+}
+</script>
+</body>
+</html>
